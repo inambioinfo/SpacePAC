@@ -1,0 +1,231 @@
+\documentclass{article}
+
+%\VignetteIndexEntry{SpacePAC: Identifying mutational clusters in 3D protein space using simulation}
+%\VignetteDepends{iPAC}
+%\VignetteKeywords{Clusters, Amino Acids, Alignment, CIF,Somatic Mutations, NMC}
+%\VignettePackage{SpacePac}
+
+%% packages
+\usepackage{graphicx}
+\usepackage{natbib}
+\usepackage{subfigure}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{Sweave}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{amsmath}
+\usepackage{url}
+
+\def \GraphPAC{\textbf{GraphPAC}}
+\def \iPAC{\textbf{iPAC}}
+\def \SpacePAC{\textbf{SpacePAC}}
+\def \TSP{\textbf{TSP}}
+\def \igraph{\textbf{igraph}}
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+  \title{\SpacePAC{}: Identifying mutational clusters in 3D protein space using simulation. }
+  \author{Gregory Ryslik  \\ Yale University  \\ gregory.ryslik@yale.edu
+        \and
+          Yuwei Cheng  \\ Yale University \\ yuwei.cheng@yale.edu
+          \and
+            Hongyu Zhao \\ Yale University \\ hongyu.zhao@yale.edu}
+
+\maketitle
+
+\begin{abstract}
+  
+\end{abstract}
+
+  The \SpacePAC{} package is designed to identify mutated amino acid hotspots while taking into account tertiary protein structure. This package is meant to complement the \iPAC{} \citep{iPAC} and \GraphPAC{} \citep{GraphPAC} packages already available in Bioconductor. Specifically, this method identifies the 1,2, or 3 spheres that cover the most number of mutations and by using simulation, provides a p-value if the spheres hold enough mutations to be statistically significant. The package also allows one to use a Poisson distribution to find the most significant sphere. Both the simulation and Poisson methods allow the user to consider spheres of multiple radii when finding the mutational hotspots. By providing an approach that identifies mutational hotspots directly in 3D space, we provide an alternative to the \iPAC{} and \GraphPAC{} methods which ultimately rely on remapping the protein to one dimensional space.
+
+\section{Introduction} \label{intro}
+
+Recent pharmacological advances in treating oncogenic driver mutations \citep{croce_oncogenes_2008} has led to the development of multiple methods to identify amino acid mutational hotspots. Two recent methods, \iPAC{} and \GraphPAC{} provided an extension to the \emph{NMC} algorithm \citep{ye_2010} by taking into account protein tertiary structure. Both \iPAC{} and \GraphPAC{} remap the protein to 1D space (\iPAC{} via MDS and \GraphPAC{} via a graph theoretic method) in order to apply the \emph{NMC} methodology which relies upon order statistics. While the remapping increases the sensivity of the algorithm and leads to the identification of novel clusters, it nevertheless requires remapping the protein to 1D space which resulting in information loss. Here we present two methods that consider the protein directly in 3D space to identify mutational hotspots. This allows us to forgo the 1D requirement that was ultimately emposed by both \iPAC{} and \GraphPAC.
+
+As in \iPAC{} and \GraphPAC{}, in order to run the clustering methodology, three types of data are required:
+\begin{itemize}
+\item The amino acid sequence of the protein that we obtain from the Sanger Institute or the Uniprot database in FASTA format.
+\item The protein tertiary structure that we obtain from the Protein Data Bank.
+\item The somatic mutation data that we obtain from the Catalogue of Somatic Mutations in cancer.
+\end{itemize}
+
+An alignment (or some other alternative renconciliation) algorithm must be used to reconcile the structural and mutational data. The mutational data must be in the format of an $m \times n$ matrix for a protein that is $n$ amino acids long. A ``1" in the $(i,j)$ element indicates that residue $j$ for individual $i$ has a mutation while a ``0" indiciates no mutation. To be compatible with this software, please ensure that your mutation matrix has the R column headings of $V1, V2,\cdots, Vn$. Only missense mutations are currently supported, indels in the amino acid sequence are not. Sample mutational data for KRAS and PIK3c$\alpha$ are included in this package as data sets. For a full description on how to extract correct mutational and positional data, please see the \iPAC{} documentation as the procedure is identical to what is documented there. For the remainder of this vignette, we assume the user is familiar with \emph{get.AlignedPositions}, \emph{get.Positions}, and the mutation data format. 
+
+Note, that there is no one source to obtain the mutational data and that this often requires prior work on the part of the user. One free source of data is the COSMIC database \url{http://cancer.sanger.ac.uk/cancergenome/projects/cosmic/}. Should you choose to use COSMIC, a local SQL server is required to load the mutational database and custom query must be made for the gene of interest. Note, that the mutational data should come from whole gene screens or whole genome studies. Mutational data can not be selectively chosen as this will violate the uniformatiy assumption that the algorithm requires to run.\\ \\
+
+Should you find a bug, or wish to contribute to the code base, please contact the author.
+
+\section{Identifying Clusters Via Simulation} \label{Spheres}
+
+The general principle here is that we find the 1, 2 or 3 non-overlapping spheres that cover as many of the mutations as possible. We then simulate the mutations uniformly over the protein and use this distribution to calculate p values. Specifically, we proceed as follows:
+\begin{itemize}
+\item Let s be the number of spheres. $s \in \{1,2,3\}$.
+\item Let r be the radius currently being considered. Typically, $r \in \{1,2,3,4,5,6,7,8,9,10\}$ and, if the data is obtained from the PDB, is measured in angstroms. For instance, when $r=5$ all residues within 5 angstroms of the center of the sphere are included within the sphere.
+\item Simulate $N \geq 1000$ distributions of the mutations over the protein structure.
+\end{itemize}
+
+Next, let $X_{0,s,r}$ respresent the number of mutations captured within the spheres centered at residues $p_1, p_2, p_3$ for the observed data. The centers $p_1, p_2, p_3$ are chosen in a way such that the spheres capture as many mutations as possible (See Section \ref{quickly}). Further, $s$ represents the maximum number of spheres considered ($s \in \{1,2,3\}$). Let $X_{i,s,r}$ represent the same but for simulation $i$. For a given $\{s,r\}$, calculate $\mu_{s,r} = \underset{1 \leq i \leq N}{\operatorname{mean}}\{X_{i,s,r}\}$ and $\sigma_{s,r} = \underset{1 \leq i \leq N}{\operatorname{std.dev.}}\{X_{i,s,r}\}$. For each simulation, then calculate  $Z_i = \max_i \{ ( X_{i,s,r}- \mu_{s,r})/\sigma_{s,r} \}$. The p-value is is then found as:  $(\sum{\mathbf{1}_{Z_{0} > Z_{i}}}) / N$. \\ \\
+
+\noindent This process is best seen through Figure \ref{FigWork} below:
+
+\begin{figure}[htb!]
+\includegraphics [width = 122mm] {FinalStatisticDiagram.pdf}
+\caption{Here we consider radii of 3 and 9 angstroms and want consider up to 3 spheres when identifying mutational hotspots (hence the number of spheres goes from 1 to 3). First, $\mu$ and $\sigma$ are calculated over each column. Next, we normalize each entry in the column by calculating $Z_{i,s,r} =  \frac{ X_{i,s,r }-  \mu_{s,r}}{\sigma_{s,r}}$. We then take the maximum over each row to get $Z_0,..., Z_{1000}$. The percentage of times $Z_0 \geq Z_i$ where $i \in \{1,...,1000\}$, is the p-value of our observed statistic $Z_0$ ($Z_0$ is referred to as the Z.Score in the man pages and output.}
+\label{FigWork}
+\end{figure}
+
+ An example of the code and ouput is shown in \emph{Example 1} below. The sample code below allows up to 3 spheres (3 hotspots) but it can be set to only consider up to 1 or 2 spheres. We also consider 4 radii in the code below but you can consider as many sizes as you want. Note that the larger the radii, the more difficult it is to find non-overlapping spheres which increases the running time. Also, if the sphere sizes are \emph{too} large, it might be impossible to find non-overlapping spheres. See Section \ref{quickly} for the algorithm we use to identify the sphere positions. \\ \\ \\
+
+
+\begin{verbatim}
+Code Example 1: Running Spaceclust with 3 spheres with radii 1,2,3,4.
+\end{verbatim}
+\begin{small}
+<<label=Example1,echo=true, fig=FALSE,eval = TRUE>>=
+library(SpacePAC)
+##Extract the data from a CIF file and match it up with the canonical protein sequence.
+#Here we use the 2ENQ structure from the PDB, which corresponds to the PIK3CA protein.
+CIF <- "http://www.pdb.org/pdb/files/2ENQ.cif"
+Fasta <- "http://www.uniprot.org/uniprot/P42336.fasta"
+PIK3CA.Positions <- get.AlignedPositions(CIF, Fasta, "A")
+
+##Load the mutational data for PIK3CA. Here the mutational data was obtained from the
+##COSMIC database (version 58). 
+data(PIK3CA.Mutations)
+
+##Identify and report the clusters. 
+my.clusters <- SpaceClust(PIK3CA.Mutations, PIK3CA.Positions$Positions, numsims =1000, 
+  simMaxSpheres = 3, radii.vector = c(1,2,3,4), method = "SimMax")
+
+my.clusters
+@
+
+Using PyMOL \citep{PyMOL} (see Section \ref{Plotting}), we can now visualize these spheres in Figure \ref{PIK3CAFigure} below.  If you would like to render one sphere at a time see \emph{make.3D.Sphere} for a built in R function. 
+
+
+\begin{figure}[H]
+\begin{center}
+\includegraphics [width = 75mm] {2ENQ-A.png}
+\caption{Plotting the 2ENQ structure with the 3 most significant spheres as shown in Code Example 1.}
+\label{PIK3CAFigure}
+\end{center}
+\end{figure}
+
+
+
+\end{small}
+
+\subsection{Quickly Identifying Mutational Positions}\label{quickly}
+In the approach described in Section \ref{Spheres}, we find the 1, 2 or 3 spheres that cover the most mutations. If you consider 1 sphere, the number of  possible spheres is linear in the length of the protein (namely, a sphere centered at each residue.) If we consider 2 spheres, there are $n \choose 2$ possible sphere combinations if the protein is $n$ residues long (and ignoring sphere overlap). If we consider 3 spheres, there are $n \choose 3$ such combinations. For a medium-sized protein like PIK3C$\alpha$ which is 1,068 residues long, considering 3 spheres provides 202,461,116 possible positions. To quickly find the best sphere orientation, we execute Algorithm \ref{codesnip} shown below. Algorithm \ref{codesnip} is shown for 2 spheres but is trivially extendable to 3 or more as well.
+
+
+\begin{algorithm}
+\caption{Here we are interested in finding the two non-overlapping spheres that contain the most mutations. }
+\label{codesnip}
+\begin{algorithmic}                    % enter the algorithmic environment
+    \REQUIRE Sorted vector of counts $v$ with length $>=2$
+    \STATE starti = 2;
+    \STATE startj = 1;
+    \STATE k = length(v);
+    \STATE cand = [(starti, startj,v[starti] + v[startj])]
+    \WHILE{ (!is.empty(cand))}
+    \STATE index = max(cand) \COMMENT{Comment: max upon the last element in the 3-tuple.}
+		\STATE i,j,s = cand[index]
+    \STATE cand = cand[-index] \COMMENT{Comment: Removes the current max}
+
+		\IF { (No overlap between sphere i and j)}
+			\STATE Return (i, j, v[i]+v[j]) \COMMENT{Comment: Successful combination found.}
+		\ENDIF		
+		
+		\IF {(j ==1) and ($i < k$)}
+			\STATE cand.append((i+1, j,v[i+1] + v[j]))
+		\ENDIF
+		\IF {($j < i$) and (i!= j+1) }
+			\STATE	cand.append((i, j+1,v[i] + v[j+1]))
+		\ENDIF
+
+    \ENDWHILE
+  
+  	\STATE Return NULL \COMMENT{Comment: No succesful combination found.}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{figure}[h!]
+\includegraphics [width = 122mm] {Algorithm-Table.pdf}
+\caption{In our example, the protein has 5 residues with mutations. The residues are sorted from largest to smallest (so mutation 1 has the largest number of mutations and so forth), and the inside of the table is calculated as the sum of the mutations on both residues. In the actual code, only the lower half of the table is considered and then only sequentially to decrease running time, but we present the whole table here for clarity. Further, in the code, there is no need to set up a matrix, only the vector of mutation counts and the current location in that vector need be considered. We present the algorithm here in matrix form for ease of exposition.}
+\label{mutationexample}
+\end{figure}
+
+To illustrate how this algorithm works, suppose you have a protein with 5 mutated amino acids. Further, suppose that residue 1 has 50 mutations, residue 2 has 40 mutations, residue 3 - 30 mutations, residue 4 - 20 mutations and residue 5 - 10 mutations. For clarity, we proceed with unique mutation counts on each residue, but the algorithm is unaffected if there are identical counts on some positions. We first construct the table shown in Figure \ref{mutationexample}, with the inside calculated to be the sum of the number of mutations in amino acid i and amino acid j. Observing, that the table is symmetric, we only need to evaluate the residues below the diagonal as the entries on the diagonal come from residues that overlap one another perfectly. 
+
+The algorithm then proceeds by appending to the potential ``candidate" stack the element below and the element to the right starting from the (2,1) position. After every two potential appends (can be 0, 1 or 2) to the stack (assuming you're not on an edge and an append is possible), the maximum value over all the 3-tuple's third positions is found (thus the max mutation count in both spheres). The 3-tuple with this maximum value is then evaluated to see if the spheres overlap. If the spheres do \emph{not} overlap, then the succesful case has been found and the algorithm terminates and returns the result. If the spheres \emph{do} overlap, the next set of elements are appended to the stack and the process continues. By proceeding in this way, (pseudocode shown in Algorithm \ref{codesnip}), at each iteration, the pair of spheres being considered contain the maximum number of mutations possible from the remaining set. Further, we do not need to consider all the positions as once the first pair of non-overlapping spheres is found, we know that this is the combination of spheres that is both non-overlapping and captures the most mutations. To see this process, see Figure \ref{mutationexecution}.
+
+\begin{figure}[H]
+\includegraphics [width = 122mm] {Algorithm-Execution.pdf}
+\caption{Beginning in position (2,1,90), we remove (2,1,90) from the list and append [(3,1,80),(2,2,80)]. We then test and remove [(2,2,80)], leaving just (3,1,80) in the list. After each append to the list, we find the max element in the list by mutation count and pick the element with the maximum number of mutations between both spheres.}
+\label{mutationexecution}
+\end{figure}
+
+
+
+
+\section{Identifying Clusters Via The Poisson Distribution} \label{Poisson}
+
+This function uses a Poisson distribution to find signficant spheres. Assuming there are $m$ total mutations on $n$ amino acids, we first calculate an average mutation rate per amino acid, $\bar{\lambda} = m/n$. We then consider $n$ spheres, where sphere $i \leq n$ is centered at amino acid $i$. For sphere $i$, we calculate $\lambda_{i,r} = \bar{\lambda} a_{i,r}$ where $a_{i, r}$ is the number of amino acids within sphere $i$ (with radius $r$. Finally, for each sphere we calculate $Pr(X\geq x)$ where $x$ is the observed number of mutations in the sphere and $X$ follows a Poisson distribution with paramater $\lambda_{i,r}$. Given that this calculation occurs $n$ times (once for each sphere), a multiple comparison adjustment (specified in the ``multcomp" parameter) is applied to account for the multiple spheres. The p-values that are below the significance level $\alpha$ are returned to the user. Finally, if more than one radii is considerd, each p value is multiplied by the length of the radii vector to account for the multiple comparisons introduced by considering multiple radii.
+
+Due to the numerous multiple comparison adjustments required, we recommend using the Simulation approach described in Section \ref{Spheres}. We have left the Poisson method in this package in the case that you are only considering one radius for shorter proteins.
+
+\begin{verbatim}
+Code Example 2: Running Spaceclust using the Poisson distribution.
+\end{verbatim}
+\begin{small}
+<<label=Example2,echo=true, fig=FALSE,eval = TRUE>>=
+
+##Extract the data from a CIF file and match it up with the canonical protein sequence.
+#Here we use the 2ENQ structure from the PDB, which corresponds to the PIK3CA protein.
+CIF <- "http://www.pdb.org/pdb/files/3GFT.cif"
+Fasta <- "http://www.uniprot.org/uniprot/P01116-2.fasta"
+KRAS.Positions <- get.Positions(CIF, Fasta, "A")
+data(KRAS.Mutations)
+
+##Identify and report the clusters. 
+my.clusters <- SpaceClust(KRAS.Mutations, KRAS.Positions$Positions, radii.vector = c(1,2,3,4),
+  alpha = .05, method = "Poisson")
+my.clusters
+@
+\end{small}
+
+\section{Plotting} \label{Plotting}
+
+\SpacePAC{} provides simplified plotting functionality. The function takes in the position matrix, the amino acid number at which the sphere should be centered as well as the radius of the sphere. The alpha level specifies how dark or light the shading of the sphere should be. Only 1 sphere is able to be plotted at this time. For more advanced rendering options, we recommend the user to consider using the software package PyMOL at http://www.pymol.org \citep{PyMOL}.  
+
+The code renders the protein and sphere using the rgl package. Please run ?make.3D.Sphere for the syntax options. A figure of the KRAS protein with a sphere around residue 12 with a radius equal to 3 is shown below. 
+
+\begin{verbatim}
+Code Example 3: Making a Plot.
+\end{verbatim}
+\begin{small}
+<<label=Example3,echo=true, eval = TRUE, pdf=FALSE>>=
+  ##To avoid RGL errors, this code is not run. However it has been tested and verified. 
+  #library(rgl)
+  #CIF <- "http://www.pdb.org/pdb/files/3GFT.cif"
+  #Fasta <- "http://www.uniprot.org/uniprot/P01116-2.fasta"
+  #KRAS.Positions <- get.Positions(CIF, Fasta, "A")
+  #make.3D.Sphere(KRAS.Positions$Positions, 12, 3)
+@
+
+
+\end{small}
+
+\begin{figure}[H]
+\includegraphics [width = 122mm] {KRASRGL.png}
+\caption{Screenshot of RGL graphics of KRAS structure with sphere of radius 3 at residue 12. The RGL window that will open is interactive and allows the protein to be rotated.}
+\end{figure}
+\bibliography{refs}{}
+\bibliographystyle{plainnat}
+
+\end{document}
